@@ -180,7 +180,7 @@ class KalamApp(App):
         self.project_path = Path(project_path).resolve() if project_path else Path.cwd()
         self._messages: list[dict] = []
         self._debug_mode = debug
-        self._start_time: float | None = None
+        self._run_start_time: float | None = None
         self._timer_handle = None
         self._status_text = "ready"
 
@@ -278,8 +278,8 @@ class KalamApp(App):
 
     def _update_status_bar(self):
         base = self._status_text
-        if self._start_time is not None:
-            elapsed = time.monotonic() - self._start_time
+        if self._run_start_time is not None:
+            elapsed = time.monotonic() - self._run_start_time
             mins, secs = divmod(int(elapsed), 60)
             timer = f"[bold cyan][{mins:02d}:{secs:02d}][/]"
             self.query_one("#status-bar", Static).update(f"{timer} {base}")
@@ -287,7 +287,7 @@ class KalamApp(App):
             self.query_one("#status-bar", Static).update(base)
 
     def _stop_timer(self):
-        self._start_time = None
+        self._run_start_time = None
         if self._timer_handle:
             self._timer_handle.cancel()
             self._timer_handle = None
@@ -311,7 +311,7 @@ class KalamApp(App):
         self._add_chat_message("user", prompt)
         self.query_one("#prompt-input", TextArea).clear()
         n_files = len(files)
-        self._start_time = time.monotonic()
+        self._run_start_time = time.monotonic()
         self._timer_handle = self.set_interval(1, self._update_status_bar)
         self._set_status(f"starting ({n_files} files)")
         self._log(f"starting with {n_files} files, prompt: {prompt[:60]}...")
