@@ -27,7 +27,6 @@ STATUS_LABELS = {
     "planner": "planning tasks",
     "designer": "designing UI",
     "executor": "generating code",
-    "shell_executor": "verifying files",
 }
 
 IGNORED_DIRS = frozenset({
@@ -209,8 +208,9 @@ class KalamApp(App):
         chat = self.query_one("#chat-messages", RichLog)
         art_lines = KALAM_ASCII.splitlines()
         art_w = max(len(l) for l in art_lines)
-        w = self.size.width
-        pad = " " * max(0, (w // 2) - (art_w // 2))
+        left = self.query_one("#left-column")
+        w = left.outer_size.width if hasattr(left, "outer_size") else self.size.width
+        pad = " " * max(0, (w - art_w) // 2)
         centered = "\n".join(pad + l for l in art_lines)
         chat.write(f"[dim]{centered}[/]")
         chat.write("")
@@ -292,8 +292,6 @@ class KalamApp(App):
             "errors": [],
             "history": [],
             "status": "",
-            "commands": [],
-            "shell_output": [],
         }
 
         try:

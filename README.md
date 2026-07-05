@@ -74,7 +74,7 @@ Kalam runs as a single CLI process with two LangGraph state machines:
 ### Master Graph
 
 ```
-START ──► planner ──► [needs_design?] ──► designer ──► executor ──► shell_executor ──► END
+START ──► planner ──► [needs_design?] ──► designer ──► executor ──► END
                    │                                  ▲
                    └── (False) ───────────────────────┘
 ```
@@ -82,7 +82,6 @@ START ──► planner ──► [needs_design?] ──► designer ──► e
 - **planner** — LLM reads project files + chat history, breaks the prompt into tasks
 - **designer** — (conditional) generates UI design guidelines for frontend prompts
 - **executor** — runs each task through the Coder graph
-- **shell_executor** — verifies generated files exist on disk (`test -f`, Python syntax check)
 
 ### Coder Graph
 
@@ -106,7 +105,7 @@ A [Textual](https://textual.textualize.io) TUI with a chat-style interface (left
 1. Kalam discovers source files in your project directory (up to 200, skipping `node_modules`, `.git`, `.venv`, etc.)
 2. The planner LLM reads your prompt, the project files, and conversation history to produce a task list
 3. Each task is executed by the Coder graph: decompose, gather context, generate diffs, write files, verify, checkpoint
-4. After all tasks, `shell_executor` runs `test -f` on every generated file and syntax-checks any `.py` files
+4. The checkpoint node in the Coder graph confirms every file exists on disk and content matches
 5. Results stream to the TUI in real time with status updates and output in the sidebar tabs
 
 ## Project Structure
@@ -122,14 +121,17 @@ kalam/
     ├── kalam.tcss            # TUI stylesheet (dark GitHub-inspired theme)
     ├── agents/
     │   ├── utils.py          # LLM factory (ChatOllama), file reader
+    │   ├── tools/
+    │   │   ├── __init__.py
+    │   │   └── shell_tool.py # run_shell LangChain @tool
     │   ├── master/
     │   │   ├── graph.py      # Master StateGraph compilation
     │   │   ├── schema/state.py  # MasterState, MasterTask, ShellOutput TypedDicts
     │   │   └── nodes/
     │   │       ├── planner.py          # planner_node — LLM prompt → tasks
     │   │       ├── designer.py         # designer_node + needs_design() router
-    │   │       ├── executor.py         # executor_node — invokes Coder per task
-    │   │       └── shell_executor.py   # shell_executor_node — file verification
+    │   │       ├── executor.py          # executor_node — invokes Coder per task
+    │   │       └── ...
     │   └── coder/
     │       ├── graph.py      # Coder StateGraph compilation
     │       ├── schema/state.py  # CoderState, CoderTask TypedDicts

@@ -11,13 +11,6 @@ class ChatEntry(TypedDict):
     content: str
 
 
-class ShellOutput(TypedDict):
-    command: str
-    returncode: int
-    stdout: str
-    stderr: str
-
-
 class MasterState(TypedDict):
     files: list[str]
     prompt: str
@@ -28,5 +21,3 @@ class MasterState(TypedDict):
     errors: list[str]
     history: list[ChatEntry]
     status: str
-    commands: list[str]
-    shell_output: list[ShellOutput]
