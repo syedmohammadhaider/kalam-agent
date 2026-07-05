@@ -1,6 +1,6 @@
 import os
 
-from agents.coder.schema.state import CoderState
+from kalam.agents.coder.schema.state import CoderState
 
 
 def checkpoint_node(state: CoderState) -> dict:

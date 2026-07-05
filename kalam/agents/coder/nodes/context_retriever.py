@@ -1,8 +1,8 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 from ollama._types import ResponseError
 
-from agents.utils import get_llm, read_files
-from agents.coder.schema.state import CoderState
+from kalam.agents.utils import get_llm, read_files
+from kalam.agents.coder.schema.state import CoderState
 
 
 CONTEXT_RETRIEVAL_SYSTEM_PROMPT = """You are a context retrieval specialist. Given a coding task and available project context, extract and summarize only the most relevant information needed to complete the task.

@@ -2,7 +2,7 @@ import os
 import re
 import subprocess
 import tempfile
-from agents.coder.schema.state import CoderState
+from kalam.agents.coder.schema.state import CoderState
 
 
 def _parse_new_file_content(diff: str, file_path: str) -> str | None:

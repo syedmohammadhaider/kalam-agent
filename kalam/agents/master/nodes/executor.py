@@ -1,6 +1,6 @@
-from agents.master.schema.state import MasterState
-from agents.coder.graph import coder_graph
-from agents.coder.schema.state import CoderState
+from kalam.agents.master.schema.state import MasterState
+from kalam.agents.coder.graph import coder_graph
+from kalam.agents.coder.schema.state import CoderState
 
 
 def executor_node(state: MasterState) -> dict:

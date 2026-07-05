@@ -3,8 +3,8 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from ollama._types import ResponseError
 
-from agents.utils import get_llm
-from agents.master.schema.state import MasterState
+from kalam.agents.utils import get_llm
+from kalam.agents.master.schema.state import MasterState
 
 
 DESIGNER_SYSTEM_PROMPT = """You are a UI/UX design consultant. Given a software project description, determine whether a frontend or user interface is involved. If so, provide design guidelines covering:

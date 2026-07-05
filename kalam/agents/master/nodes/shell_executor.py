@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from agents.master.schema.state import MasterState
+from kalam.agents.master.schema.state import MasterState
 
 
 def _make_checkpoint_commands(generated_files: dict[str, str]) -> list[str]:

@@ -1,7 +1,7 @@
 import os
 import ast
 import subprocess
-from agents.coder.schema.state import CoderState
+from kalam.agents.coder.schema.state import CoderState
 
 
 def _check_python_syntax(file_path: str) -> str | None:

@@ -3,8 +3,8 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from ollama._types import ResponseError
 
-from agents.utils import get_llm
-from agents.coder.schema.state import CoderState
+from kalam.agents.utils import get_llm
+from kalam.agents.coder.schema.state import CoderState
 
 
 DECOMPOSER_SYSTEM_PROMPT = """You are a task decomposer. Given a high-level coding task, break it down into smaller, concrete subtasks.

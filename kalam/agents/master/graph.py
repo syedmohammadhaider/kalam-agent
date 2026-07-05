@@ -1,9 +1,9 @@
 from langgraph.graph import StateGraph, START, END
-from agents.master.schema.state import MasterState
-from agents.master.nodes.planner import planner_node
-from agents.master.nodes.designer import designer_node, needs_design
-from agents.master.nodes.executor import executor_node
-from agents.master.nodes.shell_executor import shell_executor_node
+from kalam.agents.master.schema.state import MasterState
+from kalam.agents.master.nodes.planner import planner_node
+from kalam.agents.master.nodes.designer import designer_node, needs_design
+from kalam.agents.master.nodes.executor import executor_node
+from kalam.agents.master.nodes.shell_executor import shell_executor_node
 
 builder = StateGraph(MasterState)
 builder.add_node("planner", planner_node)

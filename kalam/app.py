@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
-import httpx
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -20,9 +18,16 @@ from textual.widgets import (
     TextArea,
 )
 
-from widgets import ModelList
+from kalam.agents.master.graph import master_graph
+from kalam.agents.master.schema.state import MasterState
+from kalam.widgets import ModelList
 
-BACKEND_URL = os.environ.get("KALAM_BACKEND_URL", "http://localhost:8000")
+STATUS_LABELS = {
+    "planner": "planning tasks",
+    "designer": "designing UI",
+    "executor": "generating code",
+    "shell_executor": "verifying files",
+}
 
 IGNORED_DIRS = frozenset({
     "node_modules", ".git", "__pycache__", ".venv", "venv", "env",
@@ -250,67 +255,62 @@ class KalamApp(App):
         self._add_chat_message("user", prompt)
         self.query_one("#prompt-input", TextArea).clear()
         n_files = len(files)
-        self._set_status(f"[yellow]sending request ({n_files} file{'s' if n_files != 1 else ''})...[/]")
+        self._set_status(f"[yellow]starting ({n_files} file{'s' if n_files != 1 else ''})...[/]")
+
+        state: MasterState = {
+            "files": files,
+            "prompt": prompt,
+            "todo": [],
+            "context": [],
+            "design_guidelines": "",
+            "generated_files": {},
+            "errors": [],
+            "history": [],
+            "status": "",
+            "commands": [],
+            "shell_output": [],
+        }
 
         try:
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{BACKEND_URL}/run/stream",
-                    json={"prompt": prompt, "files": files},
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data = json.loads(line[6:])
-                            self._handle_sse_event(data)
-        except httpx.ConnectError:
-            self._show_error(
-                f"cannot connect to backend at {BACKEND_URL}. "
-                "start with: cd backend && uv run uvicorn main:app --reload"
-            )
-        except httpx.ReadTimeout:
-            self._show_error(
-                "request timed out — the model took too long to respond. "
-                "try a smaller model, reduce project scope, or increase the timeout."
-            )
-        except httpx.HTTPStatusError as e:
-            self._show_error(f"backend error ({e.response.status_code}): {e.response.text[:300]}")
+            async for event in master_graph.astream(state):
+                for node_name, node_output in event.items():
+                    if node_name == "__start__":
+                        continue
+                    if node_output:
+                        state.update(node_output)
+                    self._handle_graph_event(node_name, node_output)
+            self._display_results(state)
         except Exception as e:
             self._show_error(f"{type(e).__name__}: {e}")
 
-    def _handle_sse_event(self, data: dict):
-        event_type = data.get("type", "")
+    def _handle_graph_event(self, node_name: str, node_output: dict | None):
+        status_text = STATUS_LABELS.get(node_name, node_name)
+        self._set_status(f"[yellow]{status_text}[/]")
 
-        if event_type == "complete":
-            self._display_results(data)
+        if not node_output:
             return
 
-        if event_type == "status":
-            status = data.get("status", "")
-            self._set_status(f"[yellow]{status}[/]")
+        errors = node_output.get("errors", [])
+        if errors:
+            err_out = self.query_one("#errors-output", RichLog)
+            for e in errors:
+                err_out.write(f"[red]{e}[/]")
 
-            errors = data.get("errors", [])
-            if errors:
-                err_out = self.query_one("#errors-output", RichLog)
-                for e in errors:
-                    err_out.write(f"[red]{e}[/]")
+        todo = node_output.get("todo", [])
+        if todo:
+            plan_out = self.query_one("#plan-output", RichLog)
+            plan_out.clear()
+            for i, t in enumerate(todo, 1):
+                plan_out.write(f"[bold cyan]{i}.[/] {t.get('task', '')}")
+                ctx = t.get("context", "")
+                if ctx:
+                    plan_out.write(f"  [dim]{ctx}[/]")
 
-            todo = data.get("todo", [])
-            if todo:
-                plan_out = self.query_one("#plan-output", RichLog)
-                plan_out.clear()
-                for i, t in enumerate(todo, 1):
-                    plan_out.write(f"[bold cyan]{i}.[/] {t.get('task', '')}")
-                    ctx = t.get("context", "")
-                    if ctx:
-                        plan_out.write(f"  [dim]{ctx}[/]")
-
-            guidelines = data.get("design_guidelines", "")
-            if guidelines:
-                design_out = self.query_one("#design-output", RichLog)
-                design_out.clear()
-                design_out.write(f"[green]{guidelines}[/]")
+        guidelines = node_output.get("design_guidelines", "")
+        if guidelines:
+            design_out = self.query_one("#design-output", RichLog)
+            design_out.clear()
+            design_out.write(f"[green]{guidelines}[/]")
 
     def _show_error(self, message: str):
         self._set_status(f"[red]error: {message}[/]")

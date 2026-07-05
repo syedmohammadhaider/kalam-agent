@@ -1,7 +1,7 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 from ollama._types import ResponseError
-from agents.utils import get_llm, read_files
-from agents.coder.schema.state import CoderState
+from kalam.agents.utils import get_llm, read_files
+from kalam.agents.coder.schema.state import CoderState
 
 
 CODE_GENERATOR_SYSTEM_PROMPT = """You are a code generator. Given a specific coding subtask and project context, generate a unified diff (git diff format) that implements the required change.

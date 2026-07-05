@@ -1,11 +1,11 @@
 from langgraph.graph import StateGraph, START, END
-from agents.coder.schema.state import CoderState
-from agents.coder.nodes.decomposer import decomposer_node
-from agents.coder.nodes.context_retriever import context_retriever_node
-from agents.coder.nodes.code_generator import code_generator_node
-from agents.coder.nodes.file_writer import file_writer_node
-from agents.coder.nodes.verifier import verifier_node
-from agents.coder.nodes.checkpoint import checkpoint_node
+from kalam.agents.coder.schema.state import CoderState
+from kalam.agents.coder.nodes.decomposer import decomposer_node
+from kalam.agents.coder.nodes.context_retriever import context_retriever_node
+from kalam.agents.coder.nodes.code_generator import code_generator_node
+from kalam.agents.coder.nodes.file_writer import file_writer_node
+from kalam.agents.coder.nodes.verifier import verifier_node
+from kalam.agents.coder.nodes.checkpoint import checkpoint_node
 
 builder = StateGraph(CoderState)
 builder.add_node("decomposer", decomposer_node)

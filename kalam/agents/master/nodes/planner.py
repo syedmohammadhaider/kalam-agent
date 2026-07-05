@@ -3,8 +3,8 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from ollama._types import ResponseError
 
-from agents.utils import get_llm, read_files
-from agents.master.schema.state import MasterState
+from kalam.agents.utils import get_llm, read_files
+from kalam.agents.master.schema.state import MasterState
 
 
 PLANNER_SYSTEM_PROMPT = """You are a software engineering planner. Given a user request, a set of project files, and prior conversation history, break down the work into a sequence of specific, actionable tasks.
