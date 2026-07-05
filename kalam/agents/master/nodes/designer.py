@@ -7,16 +7,12 @@ from kalam.agents.utils import get_llm
 from kalam.agents.master.schema.state import MasterState
 
 
-DESIGNER_SYSTEM_PROMPT = """You are a UI/UX design consultant. Given a software project description, determine whether a frontend or user interface is involved. If so, provide design guidelines covering:
+DESIGNER_SYSTEM_PROMPT = """Check if the project needs a UI. If yes, give short design notes. If no, say false.
 
-- Color palette and typography
-- Layout and component structure
-- User experience considerations
-- Any framework-specific recommendations (Tailwind, Material UI, etc.)
-
-If there is no frontend component, return: {"needs_design": false}
-Otherwise return: {"needs_design": true, "guidelines": "<your guidelines>"}
-"""
+Return JSON:
+{"needs_design": false}
+or
+{"needs_design": true, "guidelines": "color: ..., layout: ..."}"""
 
 
 def designer_node(state: MasterState) -> dict:

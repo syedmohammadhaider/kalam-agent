@@ -4,24 +4,24 @@ from kalam.agents.utils import get_llm, read_files
 from kalam.agents.coder.schema.state import CoderState
 
 
-CODE_GENERATOR_SYSTEM_PROMPT = """You are a code generator. Given a specific coding subtask and project context, generate a unified diff (git diff format) that implements the required change.
+CODE_GENERATOR_SYSTEM_PROMPT = """Generate a unified diff (git format) for the required change. Output ONLY the diff.
 
-Rules:
-- Output ONLY the diff, no explanation
-- Use standard unified diff format with proper file headers
-- Each hunk must reference line numbers correctly
-- For new files, the diff header is: --- /dev/null\n+++ b/path/to/file
-- Respect existing code style and conventions
+For new files:
+--- /dev/null
++++ b/path/to/file
+@@ -0,0 +1,N @@
++line1
++line2
 
-Example:
---- a/src/main.py
-+++ b/src/main.py
-@@ -1,3 +1,5 @@
- def hello():
--    print("Hello")
-+    name = "World"
-+    print(f"Hello, {name}!")
-"""
+For existing files:
+--- a/path/to/file
++++ b/path/to/file
+@@ -start,count +start,count @@
+ context
+-removed
++added
+
+One file per diff. Keep changes minimal."""
 
 
 def code_generator_node(state: CoderState) -> dict:

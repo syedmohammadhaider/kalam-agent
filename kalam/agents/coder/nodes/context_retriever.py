@@ -5,15 +5,10 @@ from kalam.agents.utils import get_llm, read_files
 from kalam.agents.coder.schema.state import CoderState
 
 
-CONTEXT_RETRIEVAL_SYSTEM_PROMPT = """You are a context retrieval specialist. Given a coding task and available project context, extract and summarize only the most relevant information needed to complete the task.
+CONTEXT_RETRIEVAL_SYSTEM_PROMPT = """Extract only the parts of the project context that are needed for the task. Skip anything unrelated.
 
-Focus on:
-- Relevant code structures (classes, functions, imports)
-- Existing patterns and conventions
-- Configuration or dependency details
-
-Return a concise summary of relevant context. Be brief and specific — exclude irrelevant information.
-"""
+Focus on: relevant classes, functions, imports, patterns, config.
+Return a brief paragraph."""
 
 
 def context_retriever_node(state: CoderState) -> dict:

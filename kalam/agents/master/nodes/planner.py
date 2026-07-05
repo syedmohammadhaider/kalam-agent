@@ -7,23 +7,14 @@ from kalam.agents.utils import get_llm, read_files
 from kalam.agents.master.schema.state import MasterState
 
 
-PLANNER_SYSTEM_PROMPT = """You are a software engineering planner. Given a user request, a set of project files, and prior conversation history, break down the work into a sequence of specific, actionable tasks.
+PLANNER_SYSTEM_PROMPT = """Break the user request into a list of coding tasks. Order by dependencies first.
 
-Each task must be:
-- Self-contained and focused on one concern
-- Ordered logically (dependencies first)
-- Described with enough context for execution
-
-Return your response as a JSON list of objects, each with:
-- "task": a clear description of what to do
-- "context": any additional context or constraints for this task
+Return JSON list. Each item has:
+- "task": what to do
+- "context": constraints or references
 
 Example:
-[
-  {"task": "Create a FastAPI route GET /api/items", "context": "Use the existing database module from src/db.py"},
-  {"task": "Add input validation using Pydantic", "context": "Validate name and price fields"}
-]
-"""
+[{"task": "Add GET /api/items route", "context": "Use src/db.py"}, {"task": "Add Pydantic validation", "context": "Validate name and price"}]"""
 
 
 def planner_node(state: MasterState) -> dict:

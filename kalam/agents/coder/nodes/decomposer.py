@@ -7,24 +7,15 @@ from kalam.agents.utils import get_llm
 from kalam.agents.coder.schema.state import CoderState
 
 
-DECOMPOSER_SYSTEM_PROMPT = """You are a task decomposer. Given a high-level coding task, break it down into smaller, concrete subtasks.
+DECOMPOSER_SYSTEM_PROMPT = """Split a coding task into smaller subtasks. One file per subtask. Order by dependency.
 
-Each subtask should be:
-- Small enough to implement in one step
-- Focused on a single file or concern
-- Ordered logically (dependencies first)
-
-Return a JSON list of objects, each with:
-- "task": specific implementation instruction
-- "context": relevant context or constraints
-- "files": list of file paths this subtask affects
+Return JSON list. Each item:
+- "task": what to implement
+- "context": constraints
+- "files": list of file paths
 
 Example:
-[
-  {"task": "Add Pydantic model for Item", "context": "Include name, description, price fields", "files": ["src/models.py"]},
-  {"task": "Create POST /items endpoint", "context": "Validate with Item model, return 201", "files": ["src/routes.py"]}
-]
-"""
+[{"task": "Add Item model", "context": "fields: name, description", "files": ["src/models.py"]}]"""
 
 
 def decomposer_node(state: CoderState) -> dict:
