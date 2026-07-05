@@ -165,10 +165,11 @@ class KalamApp(App):
         ("ctrl+q", "quit", "Quit"),
     ]
 
-    def __init__(self, project_path: str | None = None, **kwargs):
+    def __init__(self, project_path: str | None = None, debug: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.project_path = Path(project_path).resolve() if project_path else Path.cwd()
         self._messages: list[dict] = []
+        self._debug_mode = debug
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-container"):
@@ -191,6 +192,10 @@ class KalamApp(App):
                             yield RichLog(id="design-output", highlight=True, markup=True)
                         with TabPane("errors", id="errors-tab"):
                             yield RichLog(id="errors-output", highlight=True, markup=True)
+
+                    if self._debug_mode:
+                        with TabPane("debug", id="debug-tab"):
+                            yield RichLog(id="debug-output", highlight=True, markup=True)
 
                     with Vertical(id="models-panel"):
                         yield Label("models", classes="panel-label")
@@ -225,13 +230,28 @@ class KalamApp(App):
         file_selector = self.query_one("#file-tree", FileSelector)
         file_selector.reset_marks()
 
-        for wid in ("plan-output", "design-output", "errors-output"):
+        clear_ids = ["plan-output", "design-output", "errors-output"]
+        if self._debug_mode:
+            clear_ids.append("debug-output")
+        for wid in clear_ids:
             self.query_one(f"#{wid}", RichLog).clear()
 
         self._messages.clear()
         self.query_one("#chat-messages", RichLog).clear()
         self.query_one("#status-bar", Static).update("ready")
         self.query_one("#prompt-input", TextArea).focus()
+
+    def _update_debug(self, node_name: str, node_output: dict | None):
+        debug_out = self.query_one("#debug-output", RichLog)
+        debug_out.clear()
+        debug_out.write(f"[bold yellow]{node_name}[/]")
+        if node_output is not None:
+            import json
+            formatted = json.dumps(node_output, indent=2, default=str) if node_output else "{}"
+            for line in formatted.splitlines():
+                if line.strip():
+                    debug_out.write(f"  {line}")
+        debug_out.write("")
 
     def _set_status(self, text: str):
         self.query_one("#status-bar", Static).update(text)
@@ -286,6 +306,9 @@ class KalamApp(App):
     def _handle_graph_event(self, node_name: str, node_output: dict | None):
         status_text = STATUS_LABELS.get(node_name, node_name)
         self._set_status(f"[yellow]{status_text}[/]")
+
+        if self._debug_mode:
+            self._update_debug(node_name, node_output)
 
         if not node_output:
             return
@@ -363,5 +386,8 @@ class KalamApp(App):
             self._set_status(f"[red]complete with {len(errors)} error(s)[/]")
         else:
             self._set_status("[green]complete[/]")
+
+        if self._debug_mode:
+            self._update_debug("final", data)
 
         self.query_one("#prompt-input", TextArea).focus()

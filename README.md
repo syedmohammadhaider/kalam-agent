@@ -17,13 +17,13 @@
 ## Installation
 
 ```bash
-pip install git+https://github.com/your-username/kalam.git
+pip install git+https://github.com/syedmohammadhaider/kalam.git
 ```
 
 Or from source:
 
 ```bash
-git clone https://github.com/your-username/kalam.git
+git clone https://github.com/syedmohammadhaider/kalam.git
 cd kalam
 pip install -e .
 ```
@@ -55,7 +55,7 @@ kalam -p ~/projects/myapp
 ### Workflow
 
 1. Type a prompt describing what you want to build
-2. Select relevant files in the file tree (left sidebar)
+2. Select relevant files in the file tree (right sidebar)
 3. Press `Ctrl+R` — Kalam plans tasks, generates code, writes files, and verifies them
 4. Progress streams in real time: status bar shows `planning tasks` → `generating code` → `verifying files`
 5. Generated files appear in the chat response; errors show in the Errors tab
