@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 from textual import work
@@ -241,17 +242,12 @@ class KalamApp(App):
         self.query_one("#status-bar", Static).update("ready")
         self.query_one("#prompt-input", TextArea).focus()
 
-    def _update_debug(self, node_name: str, node_output: dict | None):
+    def _log(self, message: str):
+        if not self._debug_mode:
+            return
+        ts = datetime.now().strftime("%H:%M:%S")
         debug_out = self.query_one("#debug-output", RichLog)
-        debug_out.clear()
-        debug_out.write(f"[bold yellow]{node_name}[/]")
-        if node_output is not None:
-            import json
-            formatted = json.dumps(node_output, indent=2, default=str) if node_output else "{}"
-            for line in formatted.splitlines():
-                if line.strip():
-                    debug_out.write(f"  {line}")
-        debug_out.write("")
+        debug_out.write(f"[dim]{ts}[/] {message}")
 
     def _set_status(self, text: str):
         self.query_one("#status-bar", Static).update(text)
@@ -276,6 +272,7 @@ class KalamApp(App):
         self.query_one("#prompt-input", TextArea).clear()
         n_files = len(files)
         self._set_status(f"[yellow]starting ({n_files} file{'s' if n_files != 1 else ''})...[/]")
+        self._log(f"starting with {n_files} files, prompt: {prompt[:60]}...")
 
         state: MasterState = {
             "files": files,
@@ -296,22 +293,35 @@ class KalamApp(App):
                 for node_name, node_output in event.items():
                     if node_name == "__start__":
                         continue
+                    self._log(f"node: [bold]{node_name}[/] {'started' if node_output is None else 'completed'}")
                     if node_output:
                         state.update(node_output)
                     self._handle_graph_event(node_name, node_output)
+            self._log("[green]graph complete[/]")
             self._display_results(state)
         except Exception as e:
+            self._log(f"[red]error[/]: {type(e).__name__}: {e}")
             self._show_error(f"{type(e).__name__}: {e}")
 
     def _handle_graph_event(self, node_name: str, node_output: dict | None):
         status_text = STATUS_LABELS.get(node_name, node_name)
         self._set_status(f"[yellow]{status_text}[/]")
 
-        if self._debug_mode:
-            self._update_debug(node_name, node_output)
-
         if not node_output:
             return
+
+        n_errors = len(node_output.get("errors", []))
+        n_todo = len(node_output.get("todo", []))
+        n_files = len(node_output.get("generated_files", {}))
+        parts = []
+        if n_todo:
+            parts.append(f"{n_todo} tasks")
+        if n_files:
+            parts.append(f"{n_files} files generated")
+        if n_errors:
+            parts.append(f"[red]{n_errors} errors[/]")
+        if parts:
+            self._log(f"  -> {', '.join(parts)}")
 
         errors = node_output.get("errors", [])
         if errors:
@@ -387,7 +397,8 @@ class KalamApp(App):
         else:
             self._set_status("[green]complete[/]")
 
-        if self._debug_mode:
-            self._update_debug("final", data)
+        n_gen = len(data.get("generated_files", {}))
+        n_err = len(data.get("errors", []))
+        self._log(f"done: {n_gen} files written, [{'red' if n_err else 'green'}]{n_err} errors[/]")
 
         self.query_one("#prompt-input", TextArea).focus()
