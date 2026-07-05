@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from datetime import datetime
@@ -329,18 +330,18 @@ class KalamApp(App):
         }
 
         try:
-            # Phase 1: Planning
+            # Phase 1: Planning (run in thread to avoid blocking the event loop)
             self._set_status("planning tasks")
             self._log("phase: master/planner")
-            plan_result = planner_node(state)
+            plan_result = await asyncio.to_thread(planner_node, state)
             state.update(plan_result)
             self._handle_graph_event("planner", plan_result)
 
-            # Phase 1.5: Design (conditional)
+            # Phase 1.5: Design (conditional, also blocking)
             if needs_design(state):
                 self._set_status("designing UI")
                 self._log("phase: master/designer")
-                design_result = designer_node(state)
+                design_result = await asyncio.to_thread(designer_node, state)
                 state.update(design_result)
                 self._handle_graph_event("designer", design_result)
 
