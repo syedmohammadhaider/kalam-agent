@@ -207,7 +207,12 @@ class KalamApp(App):
 
     def on_mount(self):
         chat = self.query_one("#chat-messages", RichLog)
-        chat.write(f"[dim]{KALAM_ASCII}[/]")
+        art_lines = KALAM_ASCII.splitlines()
+        art_w = max(len(l) for l in art_lines)
+        w = self.size.width
+        pad = " " * max(0, (w // 2) - (art_w // 2))
+        centered = "\n".join(pad + l for l in art_lines)
+        chat.write(f"[dim]{centered}[/]")
         chat.write("")
         self.query_one("#prompt-input", TextArea).focus()
 
