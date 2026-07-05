@@ -290,7 +290,7 @@ class KalamApp(App):
     def _stop_timer(self):
         self._run_start_time = None
         if self._timer_handle:
-            self._timer_handle.cancel()
+            self._timer_handle.stop()
             self._timer_handle = None
 
     @work(exclusive=True)
