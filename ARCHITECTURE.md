@@ -1,6 +1,6 @@
 # Kalam Architecture
 
-Kalam is a two-agent coding system — a **Master agent** that plans and delegates, and a **Coder agent** that implements. A Textual TUI frontend talks to a FastAPI/LangGraph backend over HTTP, with Ollama providing the local LLM inference.
+Kalam is a two-agent coding system — a **Master agent** that plans and delegates, and a **Coder agent** that implements. A Textual TUI drives LangGraph state machines directly in a single process, with Ollama providing the local LLM inference.
 
 ---
 
@@ -8,37 +8,37 @@ Kalam is a two-agent coding system — a **Master agent** that plans and delegat
 
 ```
 kalam/
-├── backend/
-│   ├── main.py                    # FastAPI app entry point
-│   ├── agents/
-│   │   ├── utils.py               # LLM factory (ChatOllama), file reader
-│   │   ├── master/
-│   │   │   ├── graph.py           # Master StateGraph compilation
-│   │   │   ├── schema/state.py    # MasterState, MasterTask TypedDicts
-│   │   │   └── nodes/
-│   │   │       ├── filesystem_explorer.py  # Discovers source files, skips ignored dirs
-│   │   │       ├── planner.py              # planner_node — LLM breaks prompt into tasks
-│   │   │       ├── designer.py             # designer_node + needs_design() router
-│   │   │       └── executor.py             # executor_node — invokes Coder per task
-│   │   └── coder/
-│   │       ├── graph.py           # Coder StateGraph compilation
-│   │       ├── schema/state.py    # CoderState, CoderTask TypedDicts
-│   │       └── nodes/
-│   │           ├── decomposer.py        # LLM breaks task into subtasks
-│   │           ├── context_retriever.py # LLM extracts relevant context
-│   │           ├── code_generator.py    # LLM produces diffs → stored in state
-│   │           ├── file_writer.py      # Applies diffs from state to filesystem
-│   │           └── verifier.py          # Syntax + existence checks
-│   └── api/
-│       └── routes.py             # POST /run, POST /run/stream (SSE), GET /health
-└── frontend/
-    └── tui/
-        ├── main.py               # TUI entry point
-        ├── app.py                # KalamApp (Textual), FileSelector
-        ├── kalam.tcss            # Stylesheet (dark GitHub-inspired theme)
-        └── widgets/
-            ├── model_list.py     # ModelList — fetches Ollama models
-            └── __init__.py
+├── pyproject.toml              # Package metadata, CLI entry point
+├── README.md
+├── ARCHITECTURE.md
+└── kalam/
+    ├── __init__.py
+    ├── __main__.py              # CLI entry point (argparse → KalamApp)
+    ├── app.py                   # KalamApp TUI (Textual), FileSelector, file discovery
+    ├── kalam.tcss               # TUI stylesheet (dark GitHub-inspired theme)
+    ├── agents/
+    │   ├── utils.py             # LLM factory (ChatOllama), file reader
+    │   ├── master/
+    │   │   ├── graph.py         # Master StateGraph compilation
+    │   │   ├── schema/state.py  # MasterState, MasterTask, ShellOutput TypedDicts
+    │   │   └── nodes/
+    │   │       ├── planner.py           # planner_node — LLM prompt → tasks
+    │   │       ├── designer.py          # designer_node + needs_design() router
+    │   │       ├── executor.py          # executor_node — invokes Coder per task
+    │   │       └── shell_executor.py    # shell_executor_node — file verification
+    │   └── coder/
+    │       ├── graph.py         # Coder StateGraph compilation
+    │       ├── schema/state.py  # CoderState, CoderTask TypedDicts
+    │       └── nodes/
+    │           ├── decomposer.py         # LLM task → subtasks
+    │           ├── context_retriever.py  # LLM extracts relevant context
+    │           ├── code_generator.py     # LLM produces unified diffs
+    │           ├── file_writer.py        # Applies diffs to filesystem
+    │           ├── verifier.py           # Syntax + existence checks
+    │           └── checkpoint.py         # On-disk file verification
+    └── widgets/
+        ├── __init__.py
+        └── model_list.py       # Ollama model list widget
 ```
 
 ---
@@ -94,7 +94,7 @@ Textual `App` laid out as:
 - **Left column (2fr)**: Chat messages (`RichLog` with markup), text prompt input.
 - **Right column (1fr)**: Process tabs (`TabbedContent` with Files, Plan, Design, Errors tabs), model list.
 
-Communication with the backend uses SSE (Server-Sent Events) via `httpx.AsyncClient` streaming — the TUI opens a streaming `POST /run/stream` connection and processes per-node status events in real time. The TUI also queries Ollama directly for the model list.
+The TUI calls `master_graph.astream(state)` directly — no HTTP layer. It processes LangGraph events per-node, updating the status bar and sidebar tabs in real time.
 
 **Key bindings**: `Ctrl+R` run, `Ctrl+L` clear, `Ctrl+Q` quit.
 
@@ -106,7 +106,6 @@ Communication with the backend uses SSE (Server-Sent Events) via `httpx.AsyncCli
 |---|---|---|
 | `KALAM_LLM_MODEL` | `qwen2.5-coder:7b` | Ollama model for all LLM calls |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `KALAM_BACKEND_URL` | `http://localhost:8000` | Backend URL (TUI → API) |
 
 All nodes call `get_llm()` (from `utils.py`) with no arguments, defaulting to the model above at temperature 0.1.
 
@@ -114,24 +113,25 @@ All nodes call `get_llm()` (from `utils.py`) with no arguments, defaulting to th
 
 ## Data Flow (End-to-End)
 
-1. User enters a prompt and selects files in the TUI, then clicks Run / `Ctrl+R`.
-2. TUI sends `POST /run {prompt, files}` to the backend.
-3. Backend invokes the Master graph, which:
+1. User enters a prompt and selects files in the TUI, then presses `Ctrl+R`.
+2. TUI discovers source files in the project directory (up to 200, skipping ignored dirs), merges with manual selections.
+3. TUI calls `master_graph.astream(state)` directly — no HTTP layer.
+4. LangGraph runs the Master graph, which:
    - Plans tasks from the prompt + file context.
    - Optionally generates design guidelines.
    - Invokes the Coder graph per task to implement code.
-4. The Coder graph decomposes, retrieves context, generates diffs (applied to filesystem via `patch`), and verifies results.
-5. The Master graph returns accumulated `generated_files`, `errors`, `todo`, and `design_guidelines`.
-6. Backend serializes the response as JSON.
-7. TUI displays the user message in the chat log, then streams status updates (exploring, planning, designing, generating) into the status bar and intermediate data into the sidebar tabs. On completion, an assistant response is appended to the chat and sidebar tabs are finalized.
+5. The Coder graph decomposes, retrieves context, generates diffs (applied to filesystem via `patch`), and verifies results.
+6. The checkpoint node confirms every generated file exists on disk.
+7. `shell_executor` runs `test -f` + Python syntax checks as a final verification layer.
+8. Results stream to the TUI in real time — status bar updates per node, sidebar tabs populate with plan/design/errors as they arrive.
 
 ---
 
 ## Key Design Decisions
 
+- **Single process** — The agent graphs and TUI run in one Python process. No HTTP server, no SSE, no subprocess management.
 - **Two-level graph** — Master plans and orchestrates; Coder implements. The executor invokes the coder graph as a sub-graph for each task.
 - **Keyword-based routing** — `needs_design()` uses keyword matching (not an LLM call) for the fast path.
-- **Filesystem mutations** — `code_generator` applies `patch -p1` directly to project files, bypassing a "preview-only" model.
-- **SSE streaming** — The backend streams per-node status updates via `POST /run/stream` (SSE). The TUI displays real-time progress in the status bar and sidebar tabs.
-- **Direct Ollama access** — The model list widget queries Ollama independently, not proxied through the backend.
+- **Direct Ollama access** — The model list widget queries Ollama independently with httpx.
 - **Error resilience** — Every node catches LLM/parse errors into `state["errors"]`; no single failure aborts the graph.
+- **Defence in depth** — Three layers verify generated files: `verifier` (syntax), `checkpoint` (on-disk existence + content match), `shell_executor` (shell-level `test -f` + compile).
