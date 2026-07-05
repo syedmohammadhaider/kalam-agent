@@ -206,6 +206,9 @@ class KalamApp(App):
             yield Footer()
 
     def on_mount(self):
+        chat = self.query_one("#chat-messages", RichLog)
+        chat.write(f"[dim]{KALAM_ASCII}[/]")
+        chat.write("")
         self.query_one("#prompt-input", TextArea).focus()
 
     def _add_chat_message(self, role: str, content: str):
