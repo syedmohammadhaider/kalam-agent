@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -19,7 +20,10 @@ from textual.widgets import (
     TextArea,
 )
 
-from kalam.agents.master.graph import master_graph
+from kalam.agents.coder.graph import coder_graph
+from kalam.agents.coder.schema.state import CoderState
+from kalam.agents.master.nodes.designer import designer_node, needs_design
+from kalam.agents.master.nodes.planner import planner_node
 from kalam.agents.master.schema.state import MasterState
 from kalam.widgets import ModelList
 
@@ -27,6 +31,15 @@ STATUS_LABELS = {
     "planner": "planning tasks",
     "designer": "designing UI",
     "executor": "generating code",
+}
+
+CODER_STATUS_LABELS = {
+    "decomposer": "decomposing",
+    "context_retriever": "gathering context",
+    "code_generator": "generating code",
+    "file_writer": "writing files",
+    "verifier": "verifying",
+    "checkpoint": "checkpointing",
 }
 
 IGNORED_DIRS = frozenset({
@@ -66,14 +79,14 @@ def discover_source_files(root: Path) -> list[str]:
 
 
 KALAM_ASCII = """\
-{█████   ████   █████████   █████         █████████   ██████   ██████
+ █████   ████   █████████   █████         █████████   ██████   ██████
 ░░███   ███░   ███░░░░░███ ░░███         ███░░░░░███ ░░██████ ██████ 
-░███  ███    ░███    ░███  ░███        ░███    ░███  ░███░█████░███ 
-░███████     ░███████████  ░███        ░███████████  ░███░░███ ░███ 
-░███░░███    ░███░░░░░███  ░███        ░███░░░░░███  ░███ ░░░  ░███ 
-░███ ░░███   ░███    ░███  ░███      █ ░███    ░███  ░███      ░███ 
-█████ ░░████ █████   █████ ███████████ █████   █████ █████     █████
-░░░░░   ░░░░ ░░░░░   ░░░░░ ░░░░░░░░░░░ ░░░░░   ░░░░░ ░░░░░     ░░░░░}"""
+ ░███  ███    ░███    ░███  ░███        ░███    ░███  ░███░█████░███ 
+ ░███████     ░███████████  ░███        ░███████████  ░███░░███ ░███ 
+ ░███░░███    ░███░░░░░███  ░███        ░███░░░░░███  ░███ ░░░  ░███ 
+ ░███ ░░███   ░███    ░███  ░███      █ ░███    ░███  ░███      ░███ 
+ █████ ░░████ █████   █████ ███████████ █████   █████ █████     █████
+░░░░░   ░░░░ ░░░░░   ░░░░░ ░░░░░░░░░░░ ░░░░░   ░░░░░ ░░░░░     ░░░░░"""
 
 
 class FileSelector(DirectoryTree):
@@ -167,6 +180,9 @@ class KalamApp(App):
         self.project_path = Path(project_path).resolve() if project_path else Path.cwd()
         self._messages: list[dict] = []
         self._debug_mode = debug
+        self._start_time: float | None = None
+        self._timer_handle = None
+        self._status_text = "ready"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-container"):
@@ -232,6 +248,7 @@ class KalamApp(App):
         self._clear_all()
 
     def _clear_all(self):
+        self._stop_timer()
         self.query_one("#prompt-input", TextArea).clear()
         file_selector = self.query_one("#file-tree", FileSelector)
         file_selector.reset_marks()
@@ -244,7 +261,8 @@ class KalamApp(App):
 
         self._messages.clear()
         self.query_one("#chat-messages", RichLog).clear()
-        self.query_one("#status-bar", Static).update("ready")
+        self._status_text = "ready"
+        self._update_status_bar()
         self.query_one("#prompt-input", TextArea).focus()
 
     def _log(self, message: str):
@@ -255,7 +273,24 @@ class KalamApp(App):
         debug_out.write(f"[dim]{ts}[/] {message}")
 
     def _set_status(self, text: str):
-        self.query_one("#status-bar", Static).update(text)
+        self._status_text = text
+        self._update_status_bar()
+
+    def _update_status_bar(self):
+        base = self._status_text
+        if self._start_time is not None:
+            elapsed = time.monotonic() - self._start_time
+            mins, secs = divmod(int(elapsed), 60)
+            timer = f"[bold cyan][{mins:02d}:{secs:02d}][/]"
+            self.query_one("#status-bar", Static).update(f"{timer} {base}")
+        else:
+            self.query_one("#status-bar", Static).update(base)
+
+    def _stop_timer(self):
+        self._start_time = None
+        if self._timer_handle:
+            self._timer_handle.cancel()
+            self._timer_handle = None
 
     @work(exclusive=True)
     async def _run_agent(self):
@@ -276,7 +311,9 @@ class KalamApp(App):
         self._add_chat_message("user", prompt)
         self.query_one("#prompt-input", TextArea).clear()
         n_files = len(files)
-        self._set_status(f"[yellow]starting ({n_files} file{'s' if n_files != 1 else ''})...[/]")
+        self._start_time = time.monotonic()
+        self._timer_handle = self.set_interval(1, self._update_status_bar)
+        self._set_status(f"starting ({n_files} files)")
         self._log(f"starting with {n_files} files, prompt: {prompt[:60]}...")
 
         state: MasterState = {
@@ -292,19 +329,79 @@ class KalamApp(App):
         }
 
         try:
-            async for event in master_graph.astream(state):
-                for node_name, node_output in event.items():
-                    if node_name == "__start__":
-                        continue
-                    self._log(f"node: [bold]{node_name}[/] {'started' if node_output is None else 'completed'}")
-                    if node_output:
-                        state.update(node_output)
-                    self._handle_graph_event(node_name, node_output)
+            # Phase 1: Planning
+            self._set_status("planning tasks")
+            self._log("phase: master/planner")
+            plan_result = planner_node(state)
+            state.update(plan_result)
+            self._handle_graph_event("planner", plan_result)
+
+            # Phase 1.5: Design (conditional)
+            if needs_design(state):
+                self._set_status("designing UI")
+                self._log("phase: master/designer")
+                design_result = designer_node(state)
+                state.update(design_result)
+                self._handle_graph_event("designer", design_result)
+
+            # Phase 2: Execute each task via coder graph with streaming
+            todo = state.get("todo", [])
+            n_tasks = len(todo)
+            if n_tasks == 0:
+                self._log("[yellow]no tasks to execute[/]")
+            else:
+                for i, task in enumerate(todo, 1):
+                    task_label = task.get("task", "")[:60]
+                    coder_state: CoderState = {
+                        "todo": [],
+                        "prompt": task["task"],
+                        "context": state.get("context", []),
+                        "files": state.get("files", []),
+                        "injected_context": task.get("context", ""),
+                        "diffs": [],
+                        "generated_files": {},
+                        "errors": [],
+                    }
+
+                    self._log(f"coder: task {i}/{n_tasks} ('{task_label}')")
+
+                    async for coder_event in coder_graph.astream(coder_state):
+                        for node_name, node_output in coder_event.items():
+                            if node_name == "__start__":
+                                continue
+                            coder_label = CODER_STATUS_LABELS.get(node_name, node_name)
+                            self._set_status(f"task {i}/{n_tasks}: {coder_label}")
+                            self._log(f"  coder/{node_name}")
+                            if node_output:
+                                coder_state.update(node_output)
+
+                    # Collect per-task results
+                    task_errors = coder_state.get("errors", [])
+                    if task_errors:
+                        full_msg = f"Task {i} ('{task['task'][:60]}'): {'; '.join(task_errors)}"
+                        state["errors"].append(full_msg)
+                        err_out = self.query_one("#errors-output", RichLog)
+                        err_out.write(f"[red]{full_msg}[/]")
+
+                    state["generated_files"].update(coder_state.get("generated_files", {}))
+
+            # Record history
+            todo_for_history = [t["task"][:80] for t in todo]
+            summary = f"todo: {todo_for_history}"
+            if state["generated_files"]:
+                summary += f"\ngenerated: {list(state['generated_files'].keys())}"
+            if state["errors"]:
+                summary += f"\nerrors: {state['errors']}"
+            state["history"].append({"role": "user", "content": prompt})
+            state["history"].append({"role": "assistant", "content": summary})
+
             self._log("[green]graph complete[/]")
             self._display_results(state)
         except Exception as e:
             self._log(f"[red]error[/]: {type(e).__name__}: {e}")
             self._show_error(f"{type(e).__name__}: {e}")
+        finally:
+            self._stop_timer()
 
     def _handle_graph_event(self, node_name: str, node_output: dict | None):
         status_text = STATUS_LABELS.get(node_name, node_name)
@@ -349,11 +446,13 @@ class KalamApp(App):
             design_out.write(f"[green]{guidelines}[/]")
 
     def _show_error(self, message: str):
+        self._stop_timer()
         self._set_status(f"[red]error: {message}[/]")
         self.notify(message, severity="error", timeout=8)
         self.query_one("#prompt-input", TextArea).focus()
 
     def _display_results(self, data: dict):
+        self._stop_timer()
         generated = data.get("generated_files", {})
         errors = data.get("errors", [])
         todo = data.get("todo", [])
