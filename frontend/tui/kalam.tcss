@@ -1,0 +1,156 @@
+Screen {
+    background: #0d1117;
+}
+
+#app-container {
+    border: round #30363d;
+    padding: 0 1;
+    height: 100%;
+}
+
+Header {
+    background: #161b22;
+    color: #c9d1d9;
+    height: 1;
+}
+
+#main-container {
+    height: 1fr;
+}
+
+/* ---- left column ---- */
+
+#left-column {
+    width: 2fr;
+    height: 100%;
+    padding: 0 1 0 0;
+}
+
+#chat-history {
+    height: 1fr;
+    border: round #30363d;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+#chat-messages {
+    height: 1fr;
+    background: #0d1117;
+    color: #c9d1d9;
+    border: none;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#chat-input-area {
+    height: auto;
+    dock: bottom;
+}
+
+#prompt-input {
+    height: 5;
+    min-height: 5;
+    max-height: 10;
+    border: round #30363d;
+    padding: 1;
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
+#prompt-input:focus {
+    border: round #58a6ff;
+}
+
+/* ---- right column ---- */
+
+#right-column {
+    width: 1fr;
+    height: 100%;
+    padding: 0 0 0 0;
+}
+
+#process-tabs {
+    height: 3fr;
+    margin-bottom: 1;
+}
+
+#process-tabs TabbedContent {
+    background: #0d1117;
+}
+
+#process-tabs TabbedContent > Vertical {
+    background: #0d1117;
+}
+
+#process-tabs TabPane {
+    padding: 1;
+}
+
+#file-tree {
+    height: 1fr;
+    border: none;
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
+#file-tree:focus {
+    border: none;
+}
+
+DirectoryTree {
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
+DirectoryTree > .tree--cursor {
+    background: #1f6feb33;
+}
+
+#plan-output, #design-output, #errors-output {
+    background: #0d1117;
+    color: #c9d1d9;
+    border: none;
+    padding: 1;
+}
+
+#models-panel {
+    height: 2fr;
+    border: round #30363d;
+    padding: 1;
+}
+
+.panel-label {
+    color: #8b949e;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+/* ---- models list ---- */
+
+#model-items {
+    height: 1fr;
+    border: none;
+    background: #0d1117;
+}
+
+#model-items ListItem {
+    padding: 0 1;
+}
+
+#model-items ListItem > Label {
+    color: #8b949e;
+}
+
+#model-items .active-model > Label {
+    color: #c9d1d9;
+    text-style: bold;
+}
+
+/* ---- status bar ---- */
+
+#status-bar {
+    height: 1;
+    background: #21262d;
+    color: #8b949e;
+    padding: 0 1;
+}
