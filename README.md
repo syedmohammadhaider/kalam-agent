@@ -9,7 +9,7 @@
 ░░░░░   ░░░░ ░░░░░   ░░░░░ ░░░░░░░░░░░ ░░░░░   ░░░░░ ░░░░░     ░░░░░
 ```
 
-**Kalam** is a local AI coding agent that runs entirely on your machine. It uses a two-agent LangGraph pipeline — a **Master** agent that plans and delegates, and a **Coder** agent that generates, writes, and verifies code — all driven by Ollama for local LLM inference.
+**Kalām** (کلام) is a local AI coding agent that runs entirely on your machine. A Textual TUI drives LangGraph state machines directly — a **Master** agent plans and delegates, and a **Coder** agent implements via tool-calling, with Ollama providing local LLM inference.
 
 ## Installation
 
@@ -48,14 +48,17 @@ kalam -p ~/projects/myapp
 | `Ctrl+R` | Run the agent with the current prompt |
 | `Ctrl+L` | Clear chat history and output |
 | `Ctrl+Q` | Quit |
+| `Ctrl+Y` / `Ctrl+G` | Approve shell command execution |
+| `Esc` | Close file autocomplete popup |
 
 ### Workflow
 
 1. Type a prompt describing what you want to build
-2. Select relevant files in the file tree (right sidebar)
-3. Press `Ctrl+R` — Kalam plans tasks, generates code, writes files, and verifies them
-4. Progress streams in real time: status bar shows `planning tasks` → `generating code` → `verifying files`
-5. Generated files appear in the chat response; errors show in the Errors tab
+2. Type `@` to attach relevant project files (autocomplete popup appears)
+3. Press `Ctrl+R` — Kalām plans tasks, generates code, writes files, and verifies them
+4. All agent steps stream into the chat panel with timestamps: plan, design, subtasks, tool calls, verification
+5. If a shell command is needed, the agent pauses — press `Ctrl+Y`/`Ctrl+G` or click the **Approve** button to allow it
+6. Results are summarized in the chat; errors appear in the Errors sidebar tab
 
 ## Configuration
 
@@ -64,83 +67,75 @@ kalam -p ~/projects/myapp
 | `KALAM_LLM_MODEL` | `qwen2.5-coder:7b` | Ollama model for all LLM calls |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 
+Each node in the graph can use a different model via the model config panel in the sidebar.
+
 ## Architecture
 
-Kalam runs as a single CLI process with two LangGraph state machines:
+Kalām runs as a single CLI process with two LangGraph state machines:
 
 ### Master Graph
 
 ```
-START ──► planner ──► [needs_design?] ──► designer ──► executor ──► END
-                   │                                  ▲
-                   └── (False) ───────────────────────┘
+START ──► planner ──► [needs_design?] ──► designer ──► (TUI loops per task)
+                    │                                  ▲
+                    └── (False) ───────────────────────┘
 ```
 
 - **planner** — LLM reads project files + chat history, breaks the prompt into tasks
 - **designer** — (conditional) generates UI design guidelines for frontend prompts
-- **executor** — runs each task through the Coder graph
+- The TUI itself loops over the planned tasks and runs each through the Coder graph
 
 ### Coder Graph
 
 ```
-START ──► decomposer ──► context_retriever ──► code_generator ──► file_writer ──► verifier ──► checkpoint ──► END
+START ──► decomposer ──► context_retriever ──► brain ──► verifier ──► checkpoint ──► END
 ```
 
-- **decomposer** — LLM splits a task into subtasks
-- **context_retriever** — LLM extracts relevant file context
-- **code_generator** — LLM produces unified diffs
-- **file_writer** — applies diffs to the filesystem via `patch -p1`
-- **verifier** — checks syntax (`ast.parse`, `py_compile`)
+- **decomposer** — LLM splits a task into subtasks (prefers single subtask)
+- **context_retriever** — LLM extracts relevant file context from the project
+- **brain** — Tool-calling LLM node with `code_writer`, `view_file`, and `run_shell` tools. Invokes tools per subtask, supports shell approval HITL
+- **verifier** — checks syntax (`ast.parse`, `py_compile`) and file existence
 - **checkpoint** — confirms files exist on disk and content matches
 
 ### Frontend
 
-A [Textual](https://textual.textualize.io) TUI with a chat-style interface (left column) and process sidebar (right column: Files, Plan, Design, Errors tabs). The status bar shows the current phase and results.
-
-## How It Works
-
-1. Kalam discovers source files in your project directory (up to 200, skipping `node_modules`, `.git`, `.venv`, etc.)
-2. The planner LLM reads your prompt, the project files, and conversation history to produce a task list
-3. Each task is executed by the Coder graph: decompose, gather context, generate diffs, write files, verify, checkpoint
-4. The checkpoint node in the Coder graph confirms every file exists on disk and content matches
-5. Results stream to the TUI in real time with status updates and output in the sidebar tabs
+A [Textual](https://textual.textualize.io) TUI with a chat-style interface (left column) and a process sidebar (right column: Errors, State tabs). File attachment via `@` mentions in the prompt. All agent steps stream into a single growing chat message with `[HH:MM:SS]` timestamps.
 
 ## Project Structure
 
 ```
 kalam/
-├── pyproject.toml           # Package metadata and CLI entry point
-├── ARCHITECTURE.md          # Detailed architecture documentation
+├── pyproject.toml              # Package metadata and CLI entry point
+├── README.md
+├── ARCHITECTURE.md
 └── kalam/
     ├── __init__.py
-    ├── __main__.py           # CLI entry point (argparse → KalamApp)
-    ├── app.py                # KalamApp TUI (Textual), FileSelector, file discovery
-    ├── kalam.tcss            # TUI stylesheet (dark GitHub-inspired theme)
+    ├── __main__.py              # CLI entry point (argparse → KalamApp)
+    ├── app.py                   # KalamApp TUI (Textual), @ file attachment
+    ├── kalam.tcss               # TUI stylesheet (dark GitHub-inspired theme)
     ├── agents/
-    │   ├── utils.py          # LLM factory (ChatOllama), file reader
+    │   ├── utils.py             # LLM factory (ChatOllama), file reader
     │   ├── tools/
     │   │   ├── __init__.py
-    │   │   └── shell_tool.py # run_shell LangChain @tool
+    │   │   └── shell_tool.py    # code_writer, view_file, run_shell LangChain tools
     │   ├── master/
-    │   │   ├── graph.py      # Master StateGraph compilation
-    │   │   ├── schema/state.py  # MasterState, MasterTask, ShellOutput TypedDicts
+    │   │   ├── graph.py         # Master StateGraph compilation
+    │   │   ├── schema/state.py  # MasterState, MasterTask TypedDicts
     │   │   └── nodes/
-    │   │       ├── planner.py          # planner_node — LLM prompt → tasks
-    │   │       ├── designer.py         # designer_node + needs_design() router
-    │   │       ├── executor.py          # executor_node — invokes Coder per task
-    │   │       └── ...
+    │   │       ├── planner.py   # planner_node — LLM prompt → tasks
+    │   │       └── designer.py  # designer_node + needs_design() router
     │   └── coder/
-    │       ├── graph.py      # Coder StateGraph compilation
+    │       ├── graph.py         # Coder StateGraph compilation
     │       ├── schema/state.py  # CoderState, CoderTask TypedDicts
     │       └── nodes/
     │           ├── decomposer.py         # LLM task → subtasks
     │           ├── context_retriever.py  # LLM extracts relevant context
-    │           ├── code_generator.py     # LLM produces unified diffs
-    │           ├── file_writer.py        # Applies diffs to filesystem
+    │           ├── brain.py              # Tool-calling LLM (code_writer/view_file/run_shell)
     │           ├── verifier.py           # Syntax + existence checks
     │           └── checkpoint.py         # On-disk file verification
     └── widgets/
         ├── __init__.py
+        ├── model_config.py  # Model configuration panel
         └── model_list.py    # Ollama model list widget
 ```
 

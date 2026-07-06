@@ -1,6 +1,5 @@
 from langchain_core.messages import HumanMessage, SystemMessage
-from ollama._types import ResponseError
-from kalam.agents.utils import get_llm, read_files
+from kalam.agents.utils import get_llm, llm_call_with_retry, read_files
 from kalam.agents.coder.schema.state import CoderState
 
 
@@ -25,7 +24,7 @@ One file per diff. Keep changes minimal."""
 
 
 def code_generator_node(state: CoderState) -> dict:
-    llm = get_llm()
+    llm = get_llm(node="code_generator")
     diffs: list[str] = list(state.get("diffs", []))
     errors: list[str] = list(state.get("errors", []))
 
@@ -43,12 +42,9 @@ def code_generator_node(state: CoderState) -> dict:
         ]
 
         try:
-            response = llm.invoke(messages)
-            diff = response.content
+            diff = llm_call_with_retry(llm, messages)
             diffs.append(diff)
-        except ResponseError as e:
-            errors.append(f"Ollama error in code_generator (subtask {task_idx}): {e}")
-        except Exception as e:
-            errors.append(f"LLM error in code_generator (subtask {task_idx}): {e}")
+        except RuntimeError as e:
+            errors.append(str(e))
 
     return {"diffs": diffs, "errors": errors}

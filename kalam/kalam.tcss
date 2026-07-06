@@ -61,6 +61,12 @@ Header {
     border: round #58a6ff;
 }
 
+#approve-btn {
+    display: none;
+    height: 3;
+    margin-top: 1;
+}
+
 /* ---- right column ---- */
 
 #right-column {
@@ -86,27 +92,35 @@ Header {
     padding: 1;
 }
 
-#file-tree {
-    height: 1fr;
-    border: none;
-    background: #0d1117;
+#file-autocomplete {
+    height: auto;
+    max-height: 10;
+    display: none;
+    border: round #58a6ff;
+    background: #161b22;
+    margin-bottom: 0;
+    padding: 0;
+}
+
+#file-autocomplete:focus {
+    border: round #58a6ff;
+}
+
+#file-autocomplete ListItem {
+    padding: 0 1;
     color: #c9d1d9;
 }
 
-#file-tree:focus {
-    border: none;
+#file-autocomplete ListItem.autocomplete-highlighted {
+    background: #1f6feb;
+    color: #ffffff;
 }
 
-DirectoryTree {
-    background: #0d1117;
-    color: #c9d1d9;
-}
-
-DirectoryTree > .tree--cursor {
+#file-autocomplete ListItem:hover {
     background: #1f6feb33;
 }
 
-#plan-output, #design-output, #errors-output, #debug-output {
+#errors-output, #state-output {
     background: #0d1117;
     color: #c9d1d9;
     border: none;
@@ -125,25 +139,49 @@ DirectoryTree > .tree--cursor {
     margin-bottom: 1;
 }
 
-/* ---- models list ---- */
+/* ---- model config panel ---- */
 
-#model-items {
+#model-config-rows {
     height: 1fr;
-    border: none;
-    background: #0d1117;
+    overflow-y: auto;
 }
 
-#model-items ListItem {
-    padding: 0 1;
+.model-config-row {
+    height: 3;
+    margin-bottom: 1;
 }
 
-#model-items ListItem > Label {
+.model-config-label {
+    width: auto;
+    min-width: 10;
     color: #8b949e;
+    padding: 0 1;
+    text-style: bold;
 }
 
-#model-items .active-model > Label {
+.model-config-row Select {
+    width: 1fr;
+    background: #161b22;
     color: #c9d1d9;
-    text-style: bold;
+    border: round #30363d;
+}
+
+.model-config-row Select:focus {
+    border: round #58a6ff;
+}
+
+.model-config-row Select > .select-current {
+    color: #c9d1d9;
+}
+
+.model-config-row Select > .select-dropdown {
+    background: #161b22;
+    color: #c9d1d9;
+}
+
+#model-loading {
+    color: #8b949e;
+    margin: 1 1;
 }
 
 /* ---- status bar ---- */

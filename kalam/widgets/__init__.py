@@ -1,3 +1,3 @@
-from .model_list import ModelList
+from .model_config import ModelConfigPanel
 
-__all__ = ["ModelList"]
+__all__ = ["ModelConfigPanel"]

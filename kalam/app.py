@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
 
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, Binding, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
-    DirectoryTree,
+    Button,
     Footer,
     Header,
     Label,
+    ListItem,
+    ListView,
     RichLog,
     Static,
     TabbedContent,
@@ -26,7 +29,8 @@ from kalam.agents.coder.schema.state import CoderState
 from kalam.agents.master.nodes.designer import designer_node, needs_design
 from kalam.agents.master.nodes.planner import planner_node
 from kalam.agents.master.schema.state import MasterState
-from kalam.widgets import ModelList
+from kalam.agents.tools import approve_shell, clear_approvals
+from kalam.widgets import ModelConfigPanel
 
 STATUS_LABELS = {
     "planner": "planning tasks",
@@ -37,8 +41,7 @@ STATUS_LABELS = {
 CODER_STATUS_LABELS = {
     "decomposer": "decomposing",
     "context_retriever": "gathering context",
-    "code_generator": "generating code",
-    "file_writer": "writing files",
+    "brain": "executing tasks",
     "verifier": "verifying",
     "checkpoint": "checkpointing",
 }
@@ -90,90 +93,17 @@ KALAM_ASCII = """\
 ░░░░░   ░░░░ ░░░░░   ░░░░░ ░░░░░░░░░░░ ░░░░░   ░░░░░ ░░░░░     ░░░░░"""
 
 
-class FileSelector(DirectoryTree):
-    FILE_MARK = "\u25cb "
-    SELECTED_MARK = "\u25cf "
-
-    def __init__(self, path: str, **kwargs):
-        super().__init__(path, **kwargs)
-        self.selected: set[str] = set()
-
-    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected):
-        path = str(event.path)
-        node = self._find_node(event.path)
-
-        if path in self.selected:
-            self.selected.remove(path)
-            if node:
-                lbl = str(node.label)
-                if lbl.startswith(self.SELECTED_MARK):
-                    node.label = lbl.replace(self.SELECTED_MARK, self.FILE_MARK, 1)
-        else:
-            self.selected.add(path)
-            if node:
-                lbl = str(node.label)
-                if not lbl.startswith(self.SELECTED_MARK):
-                    node.label = lbl.replace(self.FILE_MARK, self.SELECTED_MARK, 1) if lbl.startswith(self.FILE_MARK) else self.SELECTED_MARK + lbl
-
-        self._notify_selection_count()
-
-    @staticmethod
-    def _node_path(node) -> str | None:
-        data = node.data
-        if isinstance(data, dict):
-            p = data.get("path")
-        else:
-            p = getattr(data, "path", None) if data is not None else None
-        return str(p) if p else None
-
-    def on_tree_node_expanded(self, event: DirectoryTree.NodeExpanded):
-        for child in event.node.children:
-            p = self._node_path(child)
-            if p and p in self.selected:
-                lbl = str(child.label)
-                if not lbl.startswith(self.SELECTED_MARK):
-                    child.label = lbl.replace(self.FILE_MARK, self.SELECTED_MARK, 1) if lbl.startswith(self.FILE_MARK) else self.SELECTED_MARK + lbl
-
-    def reset_marks(self):
-        self.selected.clear()
-        self._reset_node_marks(self.root)
-
-    def _reset_node_marks(self, node):
-        for child in node.children:
-            if child.label:
-                lbl = str(child.label)
-                if lbl.startswith(self.SELECTED_MARK):
-                    child.label = lbl.replace(self.SELECTED_MARK, self.FILE_MARK, 1)
-            self._reset_node_marks(child)
-
-    def _find_node(self, target: Path):
-        return self._search_node(self.root, target)
-
-    def _search_node(self, node, target: Path):
-        for child in node.children:
-            p = self._node_path(child)
-            if p and Path(p) == target:
-                return child
-            found = self._search_node(child, target)
-            if found:
-                return found
-        return None
-
-    def _notify_selection_count(self):
-        app = self.app
-        if hasattr(app, "update_file_count"):
-            app.update_file_count(len(self.selected))
-
-
 class KalamApp(App):
     TITLE = "Kalam"
     SUB_TITLE = "AI Coding Agent"
     CSS_PATH = "kalam.tcss"
 
     BINDINGS = [
-        ("ctrl+r", "run_agent", "Run"),
-        ("ctrl+l", "clear_all", "Clear"),
-        ("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+r", "run_agent", "Run"),
+        Binding("ctrl+l", "clear_all", "Clear"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+y", "approve_shell", "Approve", priority=True),
+        Binding("ctrl+g", "approve_shell", "Approve", priority=True),
     ]
 
     def __init__(self, project_path: str | None = None, debug: bool = False, **kwargs):
@@ -184,6 +114,15 @@ class KalamApp(App):
         self._run_start_time: float | None = None
         self._timer_handle = None
         self._status_text = "ready"
+        self._state: MasterState | None = None
+        self._source_files: list[str] = []
+        self._autocomplete_active = False
+        self._autocomplete_index = 0
+        self._autocomplete_matches: list[str] = []
+        self._autocomplete_at_pos = -1
+        self._approval_event: asyncio.Event | None = None
+        self._kalam_buffer = ""
+        self._kalam_index = -1
 
     def compose(self) -> ComposeResult:
         with Vertical(id="app-container"):
@@ -194,26 +133,18 @@ class KalamApp(App):
                     with Vertical(id="chat-history"):
                         yield RichLog(id="chat-messages", highlight=True, markup=True)
                     with Vertical(id="chat-input-area"):
-                        yield TextArea(id="prompt-input", placeholder="describe what you want to build...")
+                        yield ListView(id="file-autocomplete")
+                        yield TextArea(id="prompt-input", placeholder="describe what you want to build... (type @ to attach files)")
+                        yield Button("Approve Shell", id="approve-btn", variant="primary")
 
                 with Vertical(id="right-column"):
                     with TabbedContent(id="process-tabs"):
-                        with TabPane("files", id="files-tab"):
-                            yield FileSelector(str(self.project_path), id="file-tree")
-                        with TabPane("plan", id="plan-tab"):
-                            yield RichLog(id="plan-output", highlight=True, markup=True)
-                        with TabPane("design", id="design-tab"):
-                            yield RichLog(id="design-output", highlight=True, markup=True)
                         with TabPane("errors", id="errors-tab"):
                             yield RichLog(id="errors-output", highlight=True, markup=True)
+                        with TabPane("state", id="state-tab"):
+                            yield RichLog(id="state-output", highlight=True, markup=True)
 
-                    if self._debug_mode:
-                        with TabPane("debug", id="debug-tab"):
-                            yield RichLog(id="debug-output", highlight=True, markup=True)
-
-                    with Vertical(id="models-panel"):
-                        yield Label("models", classes="panel-label")
-                        yield ModelList()
+                    yield ModelConfigPanel(id="models-panel")
 
             yield Static("ready", id="status-bar")
             yield Footer()
@@ -228,35 +159,63 @@ class KalamApp(App):
         centered = "\n".join(pad + l for l in art_lines)
         chat.write(f"[dim]{centered}[/]")
         chat.write("")
+        self._source_files = discover_source_files(self.project_path)
         self.query_one("#prompt-input", TextArea).focus()
 
     def _add_chat_message(self, role: str, content: str):
-        chat = self.query_one("#chat-messages", RichLog)
-        if role == "user":
-            chat.write(f"[bold cyan]You:[/] {content}")
-        else:
-            chat.write(f"[bold green]Kalam:[/] {content}")
-        chat.write("")
         self._messages.append({"role": role, "content": content})
+        self._rerender_chat()
 
-    def update_file_count(self, count: int):
-        pass
+    def _append_kalam_step(self, text: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        line = f"[dim]{ts}[/] {text}"
+        if not self._kalam_buffer:
+            self._kalam_buffer = line
+            self._messages.append({"role": "assistant", "content": self._kalam_buffer})
+            self._kalam_index = len(self._messages) - 1
+        else:
+            self._kalam_buffer += f"\n{line}"
+            self._messages[self._kalam_index]["content"] = self._kalam_buffer
+        self._rerender_chat()
+
+    def _rerender_chat(self):
+        chat = self.query_one("#chat-messages", RichLog)
+        chat.clear()
+        for msg in self._messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "user":
+                chat.write(f"[bold cyan]You:[/] {content}")
+            else:
+                chat.write(f"[bold green]Kalam:[/] {content}")
+            chat.write("")
 
     def action_run_agent(self):
         self._run_agent()
+
+    def action_approve_shell(self):
+        if self._approval_event:
+            self._approval_event.set()
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "approve-btn":
+            self.action_approve_shell()
 
     def action_clear_all(self):
         self._clear_all()
 
     def _clear_all(self):
         self._stop_timer()
+        self._state = None
+        self._hide_autocomplete()
+        self._approval_event = None
+        self._kalam_buffer = ""
+        self._kalam_index = -1
+        clear_approvals()
+        self.query_one("#approve-btn", Button).display = False
         self.query_one("#prompt-input", TextArea).clear()
-        file_selector = self.query_one("#file-tree", FileSelector)
-        file_selector.reset_marks()
 
-        clear_ids = ["plan-output", "design-output", "errors-output"]
-        if self._debug_mode:
-            clear_ids.append("debug-output")
+        clear_ids = ["errors-output", "state-output"]
         for wid in clear_ids:
             self.query_one(f"#{wid}", RichLog).clear()
 
@@ -269,9 +228,7 @@ class KalamApp(App):
     def _log(self, message: str):
         if not self._debug_mode:
             return
-        ts = datetime.now().strftime("%H:%M:%S")
-        debug_out = self.query_one("#debug-output", RichLog)
-        debug_out.write(f"[dim]{ts}[/] {message}")
+        self._append_kalam_step(f"[dim][debug][/] {message}")
 
     def _set_status(self, text: str):
         self._status_text = text
@@ -287,6 +244,152 @@ class KalamApp(App):
         else:
             self.query_one("#status-bar", Static).update(base)
 
+    # ---- @ file autocomplete ----
+
+    def on_text_area_changed(self, event: TextArea.Changed):
+        if event.text_area.id == "prompt-input":
+            self._check_autocomplete(event.text_area)
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        list_view = self.query_one("#file-autocomplete", ListView)
+        if list_view.display and event.list_view.id == "file-autocomplete":
+            self._autocomplete_index = list_view.index
+            self._select_autocomplete_item()
+
+    def on_key(self, event):
+        if event.key == "escape" and self._autocomplete_active:
+            self._hide_autocomplete()
+            self.query_one("#prompt-input", TextArea).focus()
+
+    def _check_autocomplete(self, textarea: TextArea):
+        text = textarea.text
+        row, col = textarea.cursor_location
+        lines = text.split('\n')
+        line = lines[row]
+
+        before_cursor = line[:col]
+        at_pos = before_cursor.rfind('@')
+
+        if at_pos >= 0:
+            fragment = before_cursor[at_pos + 1:]
+            if ' ' not in fragment and '\t' not in fragment:
+                self._autocomplete_at_pos = at_pos
+                self._autocomplete_matches = self._find_matching_files(fragment)
+                self._autocomplete_index = 0
+                self._autocomplete_active = bool(self._autocomplete_matches)
+                self._render_autocomplete()
+                return
+
+        self._hide_autocomplete()
+
+    def _find_matching_files(self, fragment: str) -> list[str]:
+        if not fragment:
+            return self._source_files[:30]
+        fragment_lower = fragment.lower()
+        return [f for f in self._source_files if fragment_lower in f.lower()][:30]
+
+    def _render_autocomplete(self):
+        list_view = self.query_one("#file-autocomplete", ListView)
+        list_view.clear()
+        for path in self._autocomplete_matches:
+            rel = os.path.relpath(path, self.project_path)
+            list_view.append(ListItem(Label(rel)))
+        list_view.index = 0
+        list_view.display = True
+        list_view.focus()
+
+    def _hide_autocomplete(self):
+        self._autocomplete_active = False
+        self._autocomplete_matches = []
+        self._autocomplete_index = 0
+        self._autocomplete_at_pos = -1
+        try:
+            list_view = self.query_one("#file-autocomplete", ListView)
+            list_view.display = False
+            list_view.clear()
+        except Exception:
+            pass
+
+    def _select_autocomplete_item(self):
+        if not self._autocomplete_matches:
+            return
+        selected = self._autocomplete_matches[self._autocomplete_index]
+        rel_path = os.path.relpath(selected, self.project_path)
+        textarea = self.query_one("#prompt-input", TextArea)
+        text = textarea.text
+        row, col = textarea.cursor_location
+
+        lines = text.split('\n')
+        line = lines[row]
+        new_line = line[:self._autocomplete_at_pos] + "@" + rel_path + line[col:]
+        lines[row] = new_line
+        textarea.text = '\n'.join(lines)
+
+        new_col = self._autocomplete_at_pos + 1 + len(rel_path)
+        textarea.move_cursor((row, new_col))
+
+        self._hide_autocomplete()
+        textarea.focus()
+
+    def _resolve_file_references(self, text: str) -> list[str]:
+        """Parse @file/path references from the prompt and resolve to absolute paths."""
+        files: list[str] = []
+        for match in re.finditer(r'(?<!\w)@(\S+)', text):
+            ref = match.group(1)
+            abs_path = self.project_path / ref
+            if abs_path.exists() and abs_path.is_file():
+                files.append(str(abs_path))
+            else:
+                ref_lower = ref.lower()
+                matches = [f for f in self._source_files if ref_lower in f.lower()]
+                files.extend(matches)
+        return list(set(files))
+
+    def _format_state(self) -> str:
+        if self._state is None:
+            return "[dim]no state[/]"
+        lines = []
+        for k, v in self._state.items():
+            if k == "history":
+                lines.append(f"[bold]{k}:[/] {len(v)} entries")
+            elif k == "generated_files" and v:
+                for f in v:
+                    lines.append(f"[bold]{k}:[/] {f}")
+            elif k == "context" and v:
+                for i, c in enumerate(v, 1):
+                    preview = c[:80] + "..." if len(c) > 80 else c
+                    lines.append(f"[bold]{k}:[/] [{i}] {preview}")
+            elif k == "injected_context" and v:
+                preview = v[:80] + "..." if len(v) > 80 else v
+                lines.append(f"[bold]{k}:[/] {preview}")
+            elif k == "diffs" and v:
+                lines.append(f"[bold]{k}:[/] {len(v)} diff(s)")
+            elif k == "todo" and v:
+                for i, t in enumerate(v, 1):
+                    task_text = t.get("task", "")[:60]
+                    lines.append(f"[bold]{k}:[/] [{i}] {task_text}")
+            elif isinstance(v, list):
+                if v:
+                    for item in v:
+                        item_s = str(item)[:80]
+                        lines.append(f"[bold]{k}:[/] {item_s}")
+                else:
+                    lines.append(f"[bold]{k}:[/] [dim]empty[/]")
+            elif isinstance(v, dict):
+                if v:
+                    lines.append(f"[bold]{k}:[/] {len(v)} item(s)")
+                else:
+                    lines.append(f"[bold]{k}:[/] [dim]empty[/]")
+            else:
+                text = str(v)[:120]
+                lines.append(f"[bold]{k}:[/] {text}" if v else f"[bold]{k}:[/] [dim]{text}[/]")
+        return "\n".join(lines)
+
+    def _update_state_display(self):
+        out = self.query_one("#state-output", RichLog)
+        out.clear()
+        out.write(self._format_state())
+
     def _stop_timer(self):
         self._run_start_time = None
         if self._timer_handle:
@@ -300,22 +403,24 @@ class KalamApp(App):
             self._show_error("enter a prompt before running.")
             return
 
-        file_selector = self.query_one("#file-tree", FileSelector)
-        selected = set(file_selector.selected)
-
-        discovered = discover_source_files(self.project_path)
-        if discovered:
-            files = list(selected | set(discovered))
-        else:
-            files = list(selected)
+        self._source_files = discover_source_files(self.project_path)
+        files = self._resolve_file_references(prompt) or self._source_files
 
         self._add_chat_message("user", prompt)
+        self._kalam_buffer = ""
+        self._kalam_index = -1
+        self._append_kalam_step("starting...")
         self.query_one("#prompt-input", TextArea).clear()
         n_files = len(files)
         self._run_start_time = time.monotonic()
         self._timer_handle = self.set_interval(1, self._update_status_bar)
         self._set_status(f"starting ({n_files} files)")
         self._log(f"starting with {n_files} files, prompt: {prompt[:60]}...")
+
+        # Include recent conversation history from previous runs
+        history: list[dict] = []
+        for msg in self._messages[-20:-1]:
+            history.append({"role": msg["role"], "content": msg["content"]})
 
         state: MasterState = {
             "files": files,
@@ -325,25 +430,33 @@ class KalamApp(App):
             "design_guidelines": "",
             "generated_files": {},
             "errors": [],
-            "history": [],
+            "history": history,
             "status": "",
         }
+        self._state = state
+        self._update_state_display()
 
         try:
             # Phase 1: Planning (run in thread to avoid blocking the event loop)
+            self._append_kalam_step("planning tasks")
             self._set_status("planning tasks")
             self._log("phase: master/planner")
             plan_result = await asyncio.to_thread(planner_node, state)
             state.update(plan_result)
+            n_planned = len(state.get("todo", []))
+            self._append_kalam_step(f"planned {n_planned} task{'s' if n_planned != 1 else ''}")
             self._handle_graph_event("planner", plan_result)
+            self._update_state_display()
 
             # Phase 1.5: Design (conditional, also blocking)
             if needs_design(state):
+                self._append_kalam_step("designing UI")
                 self._set_status("designing UI")
                 self._log("phase: master/designer")
                 design_result = await asyncio.to_thread(designer_node, state)
                 state.update(design_result)
                 self._handle_graph_event("designer", design_result)
+                self._update_state_display()
 
             # Phase 2: Execute each task via coder graph with streaming
             todo = state.get("todo", [])
@@ -353,6 +466,7 @@ class KalamApp(App):
             else:
                 for i, task in enumerate(todo, 1):
                     task_label = task.get("task", "")[:60]
+                    self._append_kalam_step(f"task {i}/{n_tasks}: {task_label}")
                     coder_state: CoderState = {
                         "todo": [],
                         "prompt": task["task"],
@@ -362,19 +476,74 @@ class KalamApp(App):
                         "diffs": [],
                         "generated_files": {},
                         "errors": [],
+                        "skip_decompose": False,
+                        "project_path": str(self.project_path),
+                        "brain_subtask_idx": 0,
+                        "brain_messages": [],
+                        "pending_shell": "",
+                        "shell_approved": False,
+                        "chat_messages": [],
                     }
 
                     self._log(f"coder: task {i}/{n_tasks} ('{task_label}')")
 
-                    async for coder_event in coder_graph.astream(coder_state):
-                        for node_name, node_output in coder_event.items():
-                            if node_name == "__start__":
-                                continue
-                            coder_label = CODER_STATUS_LABELS.get(node_name, node_name)
-                            self._set_status(f"task {i}/{n_tasks}: {coder_label}")
-                            self._log(f"  coder/{node_name}")
-                            if node_output:
-                                coder_state.update(node_output)
+                    # Task loop — may re-enter for shell approval
+                    while True:
+                        async for coder_event in coder_graph.astream(coder_state):
+                            for node_name, node_output in coder_event.items():
+                                if node_name == "__start__":
+                                    continue
+                                coder_label = CODER_STATUS_LABELS.get(node_name, node_name)
+                                self._set_status(f"task {i}/{n_tasks}: {coder_label}")
+                                self._log(f"  coder/{node_name}")
+                                if node_output:
+                                    coder_state.update(node_output)
+                                    # Coder transparency — log node outputs to chat
+                                    if node_name == "decomposer":
+                                        n_sub = len(node_output.get("todo", []))
+                                        skip = node_output.get("skip_decompose", False)
+                                        if skip:
+                                            self._append_kalam_step(f"  \u21b3 no split needed ({n_sub} subtask)")
+                                        elif n_sub > 1:
+                                            self._append_kalam_step(f"  \u21b3 split into {n_sub} subtasks")
+                                    elif node_name == "context_retriever":
+                                        ctx = node_output.get("injected_context", "")
+                                        if ctx:
+                                            preview = ctx[:100] + "..." if len(ctx) > 100 else ctx
+                                            self._append_kalam_step(f"  \u21b3 context: {preview}")
+                                    elif node_name == "verifier":
+                                        v_errors = node_output.get("errors", [])
+                                        v_files = node_output.get("generated_files", {})
+                                        if v_errors:
+                                            self._append_kalam_step(f"  \u21b3 verification: {len(v_errors)} error(s)")
+                                        elif v_files:
+                                            self._append_kalam_step(f"  \u21b3 verification: {len(v_files)} file(s) OK")
+
+                        if coder_state.get("pending_shell"):
+                            cmd = coder_state["pending_shell"]
+                            self._append_kalam_step(
+                                f"\u26a0\ufe0f Shell needs approval: `{cmd}`",
+                            )
+                            self._approval_event = asyncio.Event()
+                            self._set_status("[yellow]awaiting shell approval \u2014 press Ctrl+Y or click Approve[/]")
+                            self.query_one("#prompt-input", TextArea).blur()
+                            self.query_one("#approve-btn", Button).display = True
+                            self.query_one("#approve-btn", Button).focus()
+                            await self._approval_event.wait()
+                            self._approval_event = None
+                            approve_shell(cmd)
+                            coder_state["shell_approved"] = True
+                            coder_state["pending_shell"] = cmd
+                            self.query_one("#approve-btn", Button).display = False
+                            self.query_one("#prompt-input", TextArea).focus()
+                            continue
+
+                        # Display brain chat messages as Kalam steps
+                        for chat_msg in coder_state.get("chat_messages", []):
+                            self._append_kalam_step(chat_msg.get("content", ""))
+                        coder_state["chat_messages"] = []
+
+                        break  # task done
 
                     # Collect per-task results
                     task_errors = coder_state.get("errors", [])
@@ -385,6 +554,11 @@ class KalamApp(App):
                         err_out.write(f"[red]{full_msg}[/]")
 
                     state["generated_files"].update(coder_state.get("generated_files", {}))
+                    self._update_state_display()
+
+                    # Refresh file list so subsequent tasks can see newly created files
+                    self._source_files = discover_source_files(self.project_path)
+                    state["files"] = list(set(state.get("files", [])) | set(self._source_files))
 
             # Record history
             todo_for_history = [t["task"][:80] for t in todo]
@@ -432,28 +606,28 @@ class KalamApp(App):
 
         todo = node_output.get("todo", [])
         if todo:
-            plan_out = self.query_one("#plan-output", RichLog)
-            plan_out.clear()
-            for i, t in enumerate(todo, 1):
-                plan_out.write(f"[bold cyan]{i}.[/] {t.get('task', '')}")
-                ctx = t.get("context", "")
-                if ctx:
-                    plan_out.write(f"  [dim]{ctx}[/]")
+            lines = [f"  {i}. {t.get('task', '')}" for i, t in enumerate(todo, 1)]
+            self._append_kalam_step("plan:\n" + "\n".join(lines))
 
         guidelines = node_output.get("design_guidelines", "")
         if guidelines:
-            design_out = self.query_one("#design-output", RichLog)
-            design_out.clear()
-            design_out.write(f"[green]{guidelines}[/]")
+            preview = guidelines[:200] + "..." if len(guidelines) > 200 else guidelines
+            self._append_kalam_step(f"design: {preview}")
+
+    def _finalize_kalam_run(self):
+        self._kalam_buffer = ""
+        self._kalam_index = -1
 
     def _show_error(self, message: str):
         self._stop_timer()
+        self._finalize_kalam_run()
         self._set_status(f"[red]error: {message}[/]")
         self.notify(message, severity="error", timeout=8)
         self.query_one("#prompt-input", TextArea).focus()
 
     def _display_results(self, data: dict):
         self._stop_timer()
+        self._finalize_kalam_run()
         generated = data.get("generated_files", {})
         errors = data.get("errors", [])
         todo = data.get("todo", [])
@@ -461,6 +635,9 @@ class KalamApp(App):
 
         # Build assistant response
         parts = []
+        if todo:
+            plan_lines = "\n".join(f"  {i}. {t.get('task', '')}" for i, t in enumerate(todo, 1))
+            parts.append(f"plan:\n{plan_lines}")
         if generated:
             files_list = "\n".join(f"  \u2713 {f}" for f in generated)
             parts.append(f"generated files:\n{files_list}")
@@ -470,26 +647,6 @@ class KalamApp(App):
             parts.append("done")
 
         self._add_chat_message("assistant", "\n".join(parts))
-
-        # Update sidebar tabs
-        plan_out = self.query_one("#plan-output", RichLog)
-        plan_out.clear()
-        if todo:
-            for i, t in enumerate(todo, 1):
-                plan_out.write(f"[bold cyan]{i}.[/] {t.get('task', '')}")
-                ctx = t.get("context", "")
-                if ctx:
-                    plan_out.write(f"  [dim]{ctx}[/]")
-                plan_out.write("")
-        else:
-            plan_out.write("[yellow]no tasks were generated.[/]")
-
-        design_out = self.query_one("#design-output", RichLog)
-        design_out.clear()
-        if guidelines:
-            design_out.write(f"[green]{guidelines}[/]")
-        else:
-            design_out.write("[dim]no design guidelines[/]")
 
         err_out = self.query_one("#errors-output", RichLog)
         err_out.clear()

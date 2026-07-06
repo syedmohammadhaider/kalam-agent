@@ -1,20 +1,32 @@
-import json
-
 from langchain_core.messages import HumanMessage, SystemMessage
-from ollama._types import ResponseError
 
-from kalam.agents.utils import get_llm, read_files
+from kalam.agents.utils import get_llm, llm_call_with_retry, read_files
 from kalam.agents.master.schema.state import MasterState
 
 
-PLANNER_SYSTEM_PROMPT = """Break the user request into a list of coding tasks. Order by dependencies first.
+PLANNER_SYSTEM_PROMPT = """Break the user request into as few coding tasks as possible. Prefer ONE task.
 
-Return JSON list. Each item has:
-- "task": what to do
-- "context": constraints or references
+Rules:
+- Combine tightly coupled changes (model + route + schema) into ONE task
+- Split only when changes are completely independent across unrelated files
+- If the request is straightforward, output the original request as a single task
+- Do not number tasks; one task per line, dependencies first
 
-Example:
-[{"task": "Add GET /api/items route", "context": "Use src/db.py"}, {"task": "Add Pydantic validation", "context": "Validate name and price"}]"""
+Examples — single task (preferred):
+Add Item model with CRUD routes, schema, and database migration
+Add user authentication with JWT and login endpoint
+Fix input validation across all forms
+
+Examples — split (only when truly independent):
+Add user authentication with JWT
+Add logging middleware"""
+
+
+def _parse_todo(text: str, prompt: str) -> list[dict]:
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+    if not lines:
+        return [{"task": prompt, "context": ""}]
+    return [{"task": l, "context": ""} for l in lines]
 
 
 def planner_node(state: MasterState) -> dict:
@@ -46,34 +58,9 @@ def planner_node(state: MasterState) -> dict:
         HumanMessage(content=user_message),
     ]
 
-    llm = get_llm()
-    try:
-        response = llm.invoke(messages)
-    except ResponseError as e:
-        return {
-            "todo": [],
-            "context": [],
-            "errors": [f"Ollama model not found: {e}. Pull it with: ollama pull {get_llm().model}"],
-        }
-    except Exception as e:
-        return {
-            "todo": [],
-            "context": [],
-            "errors": [f"LLM error in planner: {e}"],
-        }
-
-    try:
-        todo_list = json.loads(response.content)
-        if isinstance(todo_list, dict):
-            for key in ("tasks", "todo", "subtasks"):
-                if key in todo_list:
-                    todo_list = todo_list[key]
-                    break
-    except (json.JSONDecodeError, TypeError):
-        todo_list = [{"task": state["prompt"], "context": ""}]
-
-    if not isinstance(todo_list, list):
-        todo_list = [{"task": str(todo_list), "context": ""}]
+    llm = get_llm(node="planner")
+    text = llm_call_with_retry(llm, messages)
+    todo_list = _parse_todo(text, state["prompt"])
 
     context = [f"File: {path}\n{content[:2000]}" for path, content in file_contents.items()]
 

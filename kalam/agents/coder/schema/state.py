@@ -16,3 +16,11 @@ class CoderState(TypedDict):
     diffs: list[str]
     generated_files: dict[str, str]
     errors: list[str]
+    skip_decompose: bool
+    project_path: str
+    # brain node state
+    brain_subtask_idx: int
+    brain_messages: list
+    pending_shell: str
+    shell_approved: bool
+    chat_messages: list[dict]

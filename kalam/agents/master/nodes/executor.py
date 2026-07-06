@@ -18,6 +18,13 @@ def executor_node(state: MasterState) -> dict:
             "diffs": [],
             "generated_files": {},
             "errors": [],
+            "skip_decompose": False,
+            "project_path": "",
+            "brain_subtask_idx": 0,
+            "brain_messages": [],
+            "pending_shell": "",
+            "shell_approved": False,
+            "chat_messages": [],
         }
 
         result = coder_graph.invoke(coder_state)

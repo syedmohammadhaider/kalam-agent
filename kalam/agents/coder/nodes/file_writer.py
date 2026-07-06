@@ -5,12 +5,17 @@ import tempfile
 from kalam.agents.coder.schema.state import CoderState
 
 
-def _parse_new_file_content(diff: str, file_path: str) -> str | None:
+def _resolve(root: str, path: str) -> str:
+    return os.path.join(root, path) if not os.path.isabs(path) else path
+
+
+def _parse_new_file_content(diff: str, file_path: str, project_path: str) -> str | None:
     lines = []
     in_target = False
+    abs_target = _resolve(project_path, file_path)
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
-            in_target = os.path.abspath(line[6:]) == os.path.abspath(file_path)
+            in_target = _resolve(project_path, line[6:]) == abs_target
             continue
         if line.startswith("---"):
             continue
@@ -21,14 +26,14 @@ def _parse_new_file_content(diff: str, file_path: str) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def _apply_diff(diff: str) -> tuple[bool, str]:
+def _apply_diff(diff: str, project_path: str) -> tuple[bool, str]:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".diff", delete=False) as f:
         f.write(diff)
         diff_path = f.name
     try:
         result = subprocess.run(
             ["patch", "-p1", "-i", diff_path],
-            capture_output=True, text=True, cwd=os.getcwd(),
+            capture_output=True, text=True, cwd=project_path,
         )
         ok = result.returncode == 0
         details = result.stderr.strip() if result.stderr else ""
@@ -48,6 +53,7 @@ def _extract_target_files(diff: str) -> list[str]:
 
 
 def file_writer_node(state: CoderState) -> dict:
+    project_path = state.get("project_path", os.getcwd())
     generated_files: dict[str, str] = dict(state.get("generated_files", {}))
     errors: list[str] = list(state.get("errors", []))
 
@@ -55,9 +61,9 @@ def file_writer_node(state: CoderState) -> dict:
         target_files = _extract_target_files(diff)
 
         for file_path in target_files:
-            abs_path = os.path.abspath(file_path)
+            abs_path = _resolve(project_path, file_path)
             if os.path.exists(abs_path):
-                success, details = _apply_diff(diff)
+                success, details = _apply_diff(diff, project_path)
                 if success:
                     with open(abs_path) as f:
                         generated_files[file_path] = f.read()
@@ -68,7 +74,7 @@ def file_writer_node(state: CoderState) -> dict:
                     errors.append(msg)
             else:
                 os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
-                content = _parse_new_file_content(diff, file_path)
+                content = _parse_new_file_content(diff, file_path, project_path)
                 if content is not None:
                     with open(abs_path, "w") as f:
                         f.write(content)

@@ -3,12 +3,17 @@ import os
 from kalam.agents.coder.schema.state import CoderState
 
 
+def _resolve(root: str, path: str) -> str:
+    return os.path.join(root, path) if not os.path.isabs(path) else path
+
+
 def checkpoint_node(state: CoderState) -> dict:
+    project_path = state.get("project_path", os.getcwd())
     errors: list[str] = list(state.get("errors", []))
     generated_files: dict[str, str] = dict(state.get("generated_files", {}))
 
     for file_path in generated_files:
-        abs_path = os.path.abspath(file_path) if not os.path.isabs(file_path) else file_path
+        abs_path = _resolve(project_path, file_path)
 
         if not os.path.exists(abs_path):
             errors.append(f"checkpoint failed: file not found on disk — {file_path}")
