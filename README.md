@@ -141,4 +141,4 @@ kalam/
 
 ## License
 
-MIT
+GPLv3. View [LICENSE](/LICENSE) for more details.
